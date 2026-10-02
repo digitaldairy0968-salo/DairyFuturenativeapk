@@ -44,7 +44,7 @@ jobs:
         if: hashFiles('assets/icon.png') != ''
         working-directory: dairyfuture-main
         run: |
-          npm install -D @capacitor/assets
+                    npm install -D @capacitor/assets --legacy-peer-deps
           npx capacitor-assets generate --android
 
       - name: Build web app
