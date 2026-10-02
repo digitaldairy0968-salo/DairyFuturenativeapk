@@ -1,0 +1,66 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip project
+        run: unzip -o dairyfuture-admin-android-ready.zip -d .
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        working-directory: dairyfuture-main
+        run: npm install
+
+      - name: Set app name to DairyFuture
+        run: |
+          sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">DairyFuture<\/string>/' dairyfuture-main/android/app/src/main/res/values/strings.xml
+          sed -i 's/<string name="title_activity_main">.*<\/string>/<string name="title_activity_main">DairyFuture<\/string>/' dairyfuture-main/android/app/src/main/res/values/strings.xml
+
+      - name: Prepare custom icon
+        if: hashFiles('assets/icon.png') != ''
+        run: |
+          mkdir -p dairyfuture-main/assets
+          cp assets/icon.png dairyfuture-main/assets/icon.png
+
+      - name: Generate Android icons from custom image
+        if: hashFiles('assets/icon.png') != ''
+        working-directory: dairyfuture-main
+        run: |
+          npm install -D @capacitor/assets
+          npx capacitor-assets generate --android
+
+      - name: Build web app
+        working-directory: dairyfuture-main
+        run: npm run build
+
+      - name: Sync Capacitor Android
+        working-directory: dairyfuture-main
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: dairyfuture-main/android
+        run: chmod +x gradlew && ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dairyfuture-admin-apk
+          path: dairyfuture-main/android/app/build/outputs/apk/debug/app-debug.apk
