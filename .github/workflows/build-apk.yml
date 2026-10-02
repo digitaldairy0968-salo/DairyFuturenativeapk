@@ -14,6 +14,10 @@ jobs:
       - name: Unzip project
         run: unzip -o dairyfuture-admin-android-ready.zip -d .
 
+      - name: Fix PaymentSmsReceiver context bug
+        run: |
+          sed -i 's/SharedPreferences prefs = getSharedPreferences(/SharedPreferences prefs = context.getSharedPreferences(/' dairyfuture-main/android/app/src/main/java/com/dairyfuture/admin/PaymentSmsReceiver.java
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
