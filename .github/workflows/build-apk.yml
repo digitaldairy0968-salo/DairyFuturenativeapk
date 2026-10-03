@@ -69,6 +69,7 @@ jobs:
 
       - name: Prepare app icon from PWA icon
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y imagemagick
           mkdir -p dairyfuture-main/assets
           convert dairyfuture-main/public/icon-512.png -resize 840x840 -background white -gravity center -extent 1024x1024 dairyfuture-main/assets/icon.png
 
