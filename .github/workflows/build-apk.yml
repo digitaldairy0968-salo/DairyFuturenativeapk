@@ -28,6 +28,24 @@ jobs:
                 <data android:scheme="com.dairyfuture.app" />\
             </intent-filter>' dairyfuture-main/android/app/src/main/AndroidManifest.xml
 
+      - name: Fix voice entry permission API
+        run: |
+          sed -i "s/NativeSpeechRecognition\.hasPermissions()/NativeSpeechRecognition.checkPermissions()/" dairyfuture-main/src/hooks/useVoiceEntry.ts
+          sed -i "s/if (!hasPerm?\.speechRecognition) {/if (hasPerm?.speechRecognition !== 'granted') {/" dairyfuture-main/src/hooks/useVoiceEntry.ts
+          sed -i "s/if (!req?\.speechRecognition) {/if (req?.speechRecognition !== 'granted') {/" dairyfuture-main/src/hooks/useVoiceEntry.ts
+
+      - name: Auto-enable Bluetooth before printer connect
+        run: |
+          sed -i '/await BleClient.initialize();/a\
+      try {\
+        const btEnabled = await BleClient.isEnabled();\
+        if (!btEnabled) {\
+          await BleClient.requestEnable();\
+        }\
+      } catch (e) {\
+        console.warn("Bluetooth enable prompt failed", e);\
+      }' dairyfuture-main/src/lib/thermalPrinter.ts
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -48,14 +66,12 @@ jobs:
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">DairyFuture<\/string>/' dairyfuture-main/android/app/src/main/res/values/strings.xml
           sed -i 's/<string name="title_activity_main">.*<\/string>/<string name="title_activity_main">DairyFuture<\/string>/' dairyfuture-main/android/app/src/main/res/values/strings.xml
 
-      - name: Prepare custom icon
-        if: hashFiles('assets/icon.png') != ''
+      - name: Prepare app icon from PWA icon
         run: |
           mkdir -p dairyfuture-main/assets
-          cp assets/icon.png dairyfuture-main/assets/icon.png
+          convert dairyfuture-main/public/icon-512.png -resize 840x840 -background white -gravity center -extent 1024x1024 dairyfuture-main/assets/icon.png
 
-      - name: Generate Android icons from custom image
-        if: hashFiles('assets/icon.png') != ''
+      - name: Generate Android icons from PWA icon
         working-directory: dairyfuture-main
         run: |
           npm install -D @capacitor/assets --legacy-peer-deps
