@@ -18,6 +18,16 @@ jobs:
         run: |
           sed -i 's/SharedPreferences prefs = getSharedPreferences(/SharedPreferences prefs = context.getSharedPreferences(/' dairyfuture-main/android/app/src/main/java/com/dairyfuture/admin/PaymentSmsReceiver.java
 
+      - name: Add Google OAuth deep link intent filter
+        run: |
+          sed -i '/<\/activity>/i\
+            <intent-filter>\
+                <action android:name="android.intent.action.VIEW" />\
+                <category android:name="android.intent.category.DEFAULT" />\
+                <category android:name="android.intent.category.BROWSABLE" />\
+                <data android:scheme="com.dairyfuture.app" />\
+            </intent-filter>' dairyfuture-main/android/app/src/main/AndroidManifest.xml
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
