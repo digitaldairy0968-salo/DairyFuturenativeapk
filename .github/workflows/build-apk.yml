@@ -36,15 +36,16 @@ jobs:
 
       - name: Auto-enable Bluetooth before printer connect
         run: |
-          sed -i '/await BleClient.initialize();/a\
-      try {\
-        const btEnabled = await BleClient.isEnabled();\
-        if (!btEnabled) {\
-          await BleClient.requestEnable();\
-        }\
-      } catch (e) {\
-        console.warn("Bluetooth enable prompt failed", e);\
-      }' dairyfuture-main/src/lib/thermalPrinter.ts
+          python3 - <<'PYEOF'
+          path = "dairyfuture-main/src/lib/thermalPrinter.ts"
+          with open(path) as f:
+              content = f.read()
+          old = "await BleClient.initialize();"
+          new = old + "\n      try {\n        const btEnabled = await BleClient.isEnabled();\n        if (!btEnabled) {\n          await BleClient.requestEnable();\n        }\n      } catch (e) {\n        console.warn('Bluetooth enable prompt failed', e);\n      }"
+          content = content.replace(old, new, 1)
+          with open(path, 'w') as f:
+              f.write(content)
+          PYEOF
 
       - name: Set up Node
         uses: actions/setup-node@v4
