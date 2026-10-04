@@ -34,6 +34,45 @@ jobs:
           sed -i "s/if (!hasPerm?\.speechRecognition) {/if (hasPerm?.speechRecognition !== 'granted') {/" dairyfuture-main/src/hooks/useVoiceEntry.ts
           sed -i "s/if (!req?\.speechRecognition) {/if (req?.speechRecognition !== 'granted') {/" dairyfuture-main/src/hooks/useVoiceEntry.ts
 
+      - name: Fix voice entry continuous listening on native
+        run: |
+          python3 - <<'PYEOF'
+          path = "dairyfuture-main/src/hooks/useVoiceEntry.ts"
+          with open(path) as f:
+              content = f.read()
+          old = """        await NativeSpeechRecognition.start({
+          language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',
+          maxResults: 3,
+          prompt: '',
+          partialResults: true,
+          popup: false,
+        });"""
+          new = """        const startNativeSession = () => {
+          NativeSpeechRecognition.start({
+            language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',
+            maxResults: 3,
+            prompt: '',
+            partialResults: true,
+            popup: false,
+          }).catch(() => {});
+        };
+
+        await NativeSpeechRecognition.addListener('listeningState', (data: { status?: string }) => {
+          if (data?.status === 'stopped' && wantRef.current) {
+            if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+            restartTimerRef.current = setTimeout(startNativeSession, 60);
+          }
+        });
+
+        startNativeSession();"""
+          if old not in content:
+              raise SystemExit("pattern not found - aborting to avoid silent no-op")
+          content = content.replace(old, new, 1)
+          with open(path, 'w') as f:
+              f.write(content)
+          print("voice continuous-listening patch applied")
+          PYEOF
+
       - name: Auto-enable Bluetooth before printer connect
         run: |
           python3 - <<'PYEOF'
@@ -45,6 +84,91 @@ jobs:
           content = content.replace(old, new, 1)
           with open(path, 'w') as f:
               f.write(content)
+          PYEOF
+
+      - name: Add native PDF save/share support
+        run: |
+          python3 - <<'PYEOF'
+          helper = '''import jsPDF from 'jspdf';
+          import { Capacitor } from '@capacitor/core';
+          import { Filesystem, Directory } from '@capacitor/filesystem';
+          import { Share } from '@capacitor/share';
+
+          export async function downloadPdfNative(doc: jsPDF, filename: string): Promise<void> {
+            if (Capacitor.isNativePlatform()) {
+              try {
+                const dataUri = doc.output('datauristring');
+                const base64 = dataUri.split(',')[1];
+                const result = await Filesystem.writeFile({
+                  path: filename,
+                  data: base64,
+                  directory: Directory.Documents,
+                  recursive: true,
+                });
+                await Share.share({
+                  title: filename,
+                  url: result.uri,
+                  dialogTitle: 'PDF सेव / शेयर करें',
+                });
+                return;
+              } catch (e) {
+                console.error('Native PDF save failed, falling back:', e);
+              }
+            }
+            try {
+              const pdfDataUri = doc.output('datauristring');
+              const link = document.createElement('a');
+              link.href = pdfDataUri;
+              link.download = filename;
+              link.style.display = 'none';
+              document.body.appendChild(link);
+              link.click();
+              setTimeout(() => document.body.removeChild(link), 500);
+            } catch (e) {
+              console.error('PDF download failed:', e);
+            }
+          }
+          '''
+          with open('dairyfuture-main/src/lib/nativePdf.ts', 'w') as f:
+              f.write(helper)
+
+          path = 'dairyfuture-main/src/utils/exportData.ts'
+          with open(path) as f:
+              content = f.read()
+          content = content.replace(
+              "import jsPDF from 'jspdf';",
+              "import jsPDF from 'jspdf';\nimport { downloadPdfNative } from '@/lib/nativePdf';",
+              1
+          )
+          start_marker = "// Safe PDF download using data URI + hidden anchor (works in sandbox/mobile/APK)\nconst safePDFDownload = (doc: jsPDF, filename: string) => {"
+          end_marker = "export const exportToPDF = ("
+          start_idx = content.index(start_marker)
+          end_idx = content.index(end_marker)
+          new_fn = "// Native app me device storage + share sheet, web me normal browser download\nconst safePDFDownload = (doc: jsPDF, filename: string) => {\n  void downloadPdfNative(doc, filename);\n};\n\n"
+          content = content[:start_idx] + new_fn + content[end_idx:]
+          with open(path, 'w') as f:
+              f.write(content)
+
+          path2 = 'dairyfuture-main/src/components/ReportReceipt.tsx'
+          with open(path2) as f:
+              content2 = f.read()
+          lines = content2.split('\n', 1)
+          content2 = lines[0] + "\nimport { downloadPdfNative } from '@/lib/nativePdf';" + '\n' + lines[1]
+          old_block = """      const pdfDataUri = doc.output('datauristring');
+                const link = document.createElement('a');
+                link.href = pdfDataUri;
+                link.download = `Milk_Report_${data.supplierCode}_${data.startDate.replace(/-/g, '_')}.pdf`;
+                link.target = '_blank';
+                link.rel = 'noopener';
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => { document.body.removeChild(link); }, 100);"""
+          new_block = "      void downloadPdfNative(doc, `Milk_Report_${data.supplierCode}_${data.startDate.replace(/-/g, '_')}.pdf`);"
+          content2 = content2.replace(old_block, new_block, 1)
+          with open(path2, 'w') as f:
+              f.write(content2)
+          print("done")
           PYEOF
 
       - name: Set up Node
@@ -62,6 +186,10 @@ jobs:
         working-directory: dairyfuture-main
         run: npm install --legacy-peer-deps
 
+      - name: Install native PDF save plugins
+        working-directory: dairyfuture-main
+        run: npm install @capacitor/filesystem @capacitor/share --legacy-peer-deps
+
       - name: Set app name to DairyFuture
         run: |
           sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">DairyFuture<\/string>/' dairyfuture-main/android/app/src/main/res/values/strings.xml
@@ -71,7 +199,7 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y imagemagick
           mkdir -p dairyfuture-main/assets
-          convert dairyfuture-main/public/icon-512.png -resize 840x840 -background white -gravity center -extent 1024x1024 dairyfuture-main/assets/icon.png
+          convert dairyfuture-main/public/icon-512.png -resize 1000x1000 -background white -gravity center -extent 1024x1024 dairyfuture-main/assets/icon.png
 
       - name: Generate Android icons from PWA icon
         working-directory: dairyfuture-main
