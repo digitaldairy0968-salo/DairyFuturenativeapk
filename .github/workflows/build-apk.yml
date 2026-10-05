@@ -34,17 +34,25 @@ jobs:
           sed -i "s/if (!hasPerm?\.speechRecognition) {/if (hasPerm?.speechRecognition !== 'granted') {/" dairyfuture-main/src/hooks/useVoiceEntry.ts
           sed -i "s/if (!req?\.speechRecognition) {/if (req?.speechRecognition !== 'granted') {/" dairyfuture-main/src/hooks/useVoiceEntry.ts
 
-      - name: Fix voice entry continuous listening on native
+      - name: Switch to capgo continuous speech recognition plugin
         run: |
           python3 -c "
           path = 'dairyfuture-main/src/hooks/useVoiceEntry.ts'
           f = open(path); content = f.read(); f.close()
-          old = \"        await NativeSpeechRecognition.start({\n          language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n          maxResults: 3,\n          prompt: '',\n          partialResults: true,\n          popup: false,\n        });\"
-          new = \"        const startNativeSession = () => {\n          NativeSpeechRecognition.start({\n            language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n            maxResults: 5,\n            prompt: '',\n            partialResults: true,\n            popup: false,\n          }).catch(() => {\n            if (wantRef.current) {\n              setTimeout(startNativeSession, 150);\n            }\n          });\n        };\n\n        await NativeSpeechRecognition.addListener('listeningState', (data) => {\n          if (data && data.status === 'stopped' && wantRef.current) {\n            startNativeSession();\n          }\n        });\n\n        startNativeSession();\"
-          assert old in content, 'pattern not found'
-          content = content.replace(old, new, 1)
+
+          old_import = \"import { SpeechRecognition as NativeSpeechRecognition } from '@capacitor-community/speech-recognition';\"
+          new_import = \"import { SpeechRecognition as NativeSpeechRecognition } from '@capgo/capacitor-speech-recognition';\"
+          assert old_import in content, 'import not found'
+          content = content.replace(old_import, new_import, 1)
+
+          old_block = \"        await NativeSpeechRecognition.addListener('partialResults', (data: { matches?: string[] }) => {\n          const matches = data.matches || [];\n          if (!matches.length) return;\n\n          // Check supplier command first\n          let supplierMatched = false;\n          for (const transcript of matches) {\n            const code = parseSupplierCommand(transcript, totalSuppliersRef.current);\n            if (code !== null) {\n              supplierCbRef.current?.(code);\n              setError(null);\n              supplierMatched = true;\n              break;\n            }\n          }\n          if (supplierMatched) return;\n\n          // Check milk quantity\n          for (const transcript of matches) {\n            const value = parseSpokenNumber(transcript);\n            if (value !== null) {\n              fire(value);\n              break;\n            }\n          }\n        });\n\n        await NativeSpeechRecognition.start({\n          language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n          maxResults: 3,\n          prompt: '',\n          partialResults: true,\n          popup: false,\n        });\"
+
+          new_block = \"        const handleTranscripts = (matches: string[]) => {\n          if (!matches.length) return;\n          let supplierMatched = false;\n          for (const transcript of matches) {\n            const code = parseSupplierCommand(transcript, totalSuppliersRef.current);\n            if (code !== null) {\n              supplierCbRef.current?.(code);\n              setError(null);\n              supplierMatched = true;\n              break;\n            }\n          }\n          if (supplierMatched) return;\n          for (const transcript of matches) {\n            const value = parseSpokenNumber(transcript);\n            if (value !== null) {\n              fire(value);\n              break;\n            }\n          }\n        };\n\n        await NativeSpeechRecognition.addListener('partialResults', (data: { matches?: string[] }) => {\n          handleTranscripts(data.matches || []);\n        });\n\n        await NativeSpeechRecognition.addListener('segmentResults', (data: { matches?: string[] }) => {\n          handleTranscripts(data.matches || []);\n        });\n\n        await NativeSpeechRecognition.start({\n          language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n          maxResults: 5,\n          prompt: '',\n          partialResults: true,\n          popup: false,\n          allowForSilence: 2500,\n        } as any);\"
+
+          assert old_block in content, 'main block not found'
+          content = content.replace(old_block, new_block, 1)
           f = open(path, 'w'); f.write(content); f.close()
-          print('voice patch applied')
+          print('capgo migration applied')
           "
 
       - name: Auto-enable Bluetooth before printer connect
@@ -102,6 +110,12 @@ jobs:
         working-directory: dairyfuture-main
         run: npm install --legacy-peer-deps
 
+      - name: Swap speech recognition plugin
+        working-directory: dairyfuture-main
+        run: |
+          npm uninstall @capacitor-community/speech-recognition --legacy-peer-deps
+          npm install @capgo/capacitor-speech-recognition --legacy-peer-deps
+
       - name: Install native PDF save plugins
         working-directory: dairyfuture-main
         run: npm install @capacitor/filesystem @capacitor/share --legacy-peer-deps
@@ -115,7 +129,7 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y imagemagick
           mkdir -p dairyfuture-main/assets
-          convert dairyfuture-main/public/icon-512.png -resize 1024x1024 -background white -gravity center -extent 1024x1024 dairyfuture-main/assets/icon.png
+          convert dairyfuture-main/public/icon-512.png -fuzz 8% -trim +repage -resize 1024x1024 -background white -gravity center -extent 1024x1024 dairyfuture-main/assets/icon.png
 
       - name: Generate Android icons from PWA icon
         working-directory: dairyfuture-main
