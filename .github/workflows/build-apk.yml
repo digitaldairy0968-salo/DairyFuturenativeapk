@@ -47,7 +47,7 @@ jobs:
 
           old_block = \"        await NativeSpeechRecognition.addListener('partialResults', (data: { matches?: string[] }) => {\n          const matches = data.matches || [];\n          if (!matches.length) return;\n\n          // Check supplier command first\n          let supplierMatched = false;\n          for (const transcript of matches) {\n            const code = parseSupplierCommand(transcript, totalSuppliersRef.current);\n            if (code !== null) {\n              supplierCbRef.current?.(code);\n              setError(null);\n              supplierMatched = true;\n              break;\n            }\n          }\n          if (supplierMatched) return;\n\n          // Check milk quantity\n          for (const transcript of matches) {\n            const value = parseSpokenNumber(transcript);\n            if (value !== null) {\n              fire(value);\n              break;\n            }\n          }\n        });\n\n        await NativeSpeechRecognition.start({\n          language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n          maxResults: 3,\n          prompt: '',\n          partialResults: true,\n          popup: false,\n        });\"
 
-          new_block = \"        const handleTranscripts = (matches: string[]) => {\n          if (!matches.length) return;\n          let supplierMatched = false;\n          for (const transcript of matches) {\n            const code = parseSupplierCommand(transcript, totalSuppliersRef.current);\n            if (code !== null) {\n              supplierCbRef.current?.(code);\n              setError(null);\n              supplierMatched = true;\n              break;\n            }\n          }\n          if (supplierMatched) return;\n          for (const transcript of matches) {\n            const value = parseSpokenNumber(transcript);\n            if (value !== null) {\n              fire(value);\n              break;\n            }\n          }\n        };\n\n        await NativeSpeechRecognition.addListener('partialResults', (data: { matches?: string[] }) => {\n          handleTranscripts(data.matches || []);\n        });\n\n        await NativeSpeechRecognition.addListener('segmentResults', (data: { matches?: string[] }) => {\n          handleTranscripts(data.matches || []);\n        });\n\n        await NativeSpeechRecognition.start({\n          language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n          maxResults: 5,\n          prompt: '',\n          partialResults: true,\n          popup: false,\n          allowForSilence: 2500,\n        } as any);\"
+          new_block = \"        const handleTranscripts = (matches: string[]) => {\n          if (!matches.length) return;\n          let supplierMatched = false;\n          for (const transcript of matches) {\n            const code = parseSupplierCommand(transcript, totalSuppliersRef.current);\n            if (code !== null) {\n              supplierCbRef.current?.(code);\n              setError(null);\n              supplierMatched = true;\n              break;\n            }\n          }\n          if (supplierMatched) return;\n          for (const transcript of matches) {\n            const value = parseSpokenNumber(transcript);\n            if (value !== null) {\n              fire(value);\n              break;\n            }\n          }\n        };\n\n        const startNativeSession = () => {\n          NativeSpeechRecognition.start({\n            language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n            maxResults: 5,\n            prompt: '',\n            partialResults: true,\n            popup: false,\n            allowForSilence: 2500,\n          } as any).catch(() => {\n            if (wantRef.current) {\n              setTimeout(startNativeSession, 150);\n            }\n          });\n        };\n\n        await NativeSpeechRecognition.addListener('partialResults', (data: { matches?: string[] }) => {\n          handleTranscripts(data.matches || []);\n        });\n\n        await NativeSpeechRecognition.addListener('segmentResults', (data: { matches?: string[] }) => {\n          handleTranscripts(data.matches || []);\n        });\n\n        await NativeSpeechRecognition.addListener('listeningState', (data: { status?: string }) => {\n          if (data && data.status === 'stopped' && wantRef.current) {\n            startNativeSession();\n          }\n        });\n\n        startNativeSession();\"
 
           assert old_block in content, 'main block not found'
           content = content.replace(old_block, new_block, 1)
@@ -66,10 +66,10 @@ jobs:
           f = open(path, 'w'); f.write(content); f.close()
           "
 
-      - name: Add native PDF save/share support
+      - name: Add native PDF save-to-downloads support
         run: |
           python3 -c "
-          helper = \"import jsPDF from 'jspdf';\nimport { Capacitor } from '@capacitor/core';\nimport { Filesystem, Directory } from '@capacitor/filesystem';\nimport { Share } from '@capacitor/share';\n\nexport async function downloadPdfNative(doc, filename) {\n  if (Capacitor.isNativePlatform()) {\n    try {\n      const dataUri = doc.output('datauristring');\n      const base64 = dataUri.split(',')[1];\n      const result = await Filesystem.writeFile({\n        path: filename,\n        data: base64,\n        directory: Directory.Documents,\n        recursive: true,\n      });\n      await Share.share({\n        title: filename,\n        url: result.uri,\n        dialogTitle: 'PDF सेव / शेयर करें',\n      });\n      return;\n    } catch (e) {\n      console.error('Native PDF save failed, falling back:', e);\n    }\n  }\n  try {\n    const pdfDataUri = doc.output('datauristring');\n    const link = document.createElement('a');\n    link.href = pdfDataUri;\n    link.download = filename;\n    link.style.display = 'none';\n    document.body.appendChild(link);\n    link.click();\n    setTimeout(() => document.body.removeChild(link), 500);\n  } catch (e) {\n    console.error('PDF download failed:', e);\n  }\n}\n\"
+          helper = \"import jsPDF from 'jspdf';\nimport { Capacitor } from '@capacitor/core';\nimport { FileSharer } from '@capgo/capacitor-file-sharer';\n\nexport async function downloadPdfNative(doc, filename) {\n  if (Capacitor.isNativePlatform()) {\n    try {\n      const dataUri = doc.output('datauristring');\n      const base64 = dataUri.split(',')[1];\n      await FileSharer.save({\n        filename,\n        contentType: 'application/pdf',\n        base64Data: base64,\n        android: { saveDirectory: 'downloads' },\n      });\n      return;\n    } catch (e) {\n      console.error('Native PDF save failed, falling back:', e);\n    }\n  }\n  try {\n    const pdfDataUri = doc.output('datauristring');\n    const link = document.createElement('a');\n    link.href = pdfDataUri;\n    link.download = filename;\n    link.style.display = 'none';\n    document.body.appendChild(link);\n    link.click();\n    setTimeout(() => document.body.removeChild(link), 500);\n  } catch (e) {\n    console.error('PDF download failed:', e);\n  }\n}\n\"
           f = open('dairyfuture-main/src/lib/nativePdf.ts', 'w'); f.write(helper); f.close()
 
           path = 'dairyfuture-main/src/utils/exportData.ts'
@@ -79,7 +79,7 @@ jobs:
           end_marker = 'export const exportToPDF = ('
           start_idx = content.index(start_marker)
           end_idx = content.index(end_marker)
-          new_fn = 'Native app me device storage + share sheet, web me normal browser download\nconst safePDFDownload = (doc: jsPDF, filename: string) => {\n  void downloadPdfNative(doc, filename);\n};\n\n'
+          new_fn = 'Native app me Downloads folder me seedha save, web me normal browser download\nconst safePDFDownload = (doc: jsPDF, filename: string) => {\n  void downloadPdfNative(doc, filename);\n};\n\n'
           new_fn = '// ' + new_fn
           content = content[:start_idx] + new_fn + content[end_idx:]
           f = open(path, 'w'); f.write(content); f.close()
@@ -116,9 +116,9 @@ jobs:
           npm uninstall @capacitor-community/speech-recognition --legacy-peer-deps
           npm install @capgo/capacitor-speech-recognition --legacy-peer-deps
 
-      - name: Install native PDF save plugins
+      - name: Install native PDF save plugin
         working-directory: dairyfuture-main
-        run: npm install @capacitor/filesystem @capacitor/share --legacy-peer-deps
+        run: npm install @capgo/capacitor-file-sharer --legacy-peer-deps
 
       - name: Set app name to DairyFuture
         run: |
