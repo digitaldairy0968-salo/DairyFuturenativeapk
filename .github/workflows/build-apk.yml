@@ -40,7 +40,7 @@ jobs:
           path = 'dairyfuture-main/src/hooks/useVoiceEntry.ts'
           f = open(path); content = f.read(); f.close()
           old = \"        await NativeSpeechRecognition.start({\n          language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n          maxResults: 3,\n          prompt: '',\n          partialResults: true,\n          popup: false,\n        });\"
-          new = \"        const startNativeSession = () => {\n          NativeSpeechRecognition.start({\n            language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n            maxResults: 3,\n            prompt: '',\n            partialResults: true,\n            popup: false,\n          }).catch(() => {});\n        };\n\n        await NativeSpeechRecognition.addListener('listeningState', (data) => {\n          if (data && data.status === 'stopped' && wantRef.current) {\n            if (restartTimerRef.current) clearTimeout(restartTimerRef.current);\n            restartTimerRef.current = setTimeout(startNativeSession, 60);\n          }\n        });\n\n        startNativeSession();\"
+          new = \"        const startNativeSession = () => {\n          NativeSpeechRecognition.start({\n            language: langRef.current === 'en' ? 'en-IN' : 'hi-IN',\n            maxResults: 5,\n            prompt: '',\n            partialResults: true,\n            popup: false,\n          }).catch(() => {\n            if (wantRef.current) {\n              setTimeout(startNativeSession, 150);\n            }\n          });\n        };\n\n        await NativeSpeechRecognition.addListener('listeningState', (data) => {\n          if (data && data.status === 'stopped' && wantRef.current) {\n            startNativeSession();\n          }\n        });\n\n        startNativeSession();\"
           assert old in content, 'pattern not found'
           content = content.replace(old, new, 1)
           f = open(path, 'w'); f.write(content); f.close()
@@ -115,7 +115,7 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y imagemagick
           mkdir -p dairyfuture-main/assets
-          convert dairyfuture-main/public/icon-512.png -resize 1000x1000 -background white -gravity center -extent 1024x1024 dairyfuture-main/assets/icon.png
+          convert dairyfuture-main/public/icon-512.png -resize 1024x1024 -background white -gravity center -extent 1024x1024 dairyfuture-main/assets/icon.png
 
       - name: Generate Android icons from PWA icon
         working-directory: dairyfuture-main
