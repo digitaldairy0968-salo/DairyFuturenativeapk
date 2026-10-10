@@ -66,34 +66,169 @@ jobs:
           f = open(path, 'w'); f.write(content); f.close()
           "
 
-      - name: Add native PDF save-to-downloads support
+      - name: Add native Downloads saver plugin (Java)
         run: |
-          python3 -c "
-          helper = \"import jsPDF from 'jspdf';\nimport { Capacitor } from '@capacitor/core';\nimport { FileSharer } from '@capgo/capacitor-file-sharer';\n\nexport async function downloadPdfNative(doc, filename) {\n  if (Capacitor.isNativePlatform()) {\n    try {\n      const dataUri = doc.output('datauristring');\n      const base64 = dataUri.split(',')[1];\n      await FileSharer.save({\n        filename,\n        contentType: 'application/pdf',\n        base64Data: base64,\n        android: { saveDirectory: 'downloads' },\n      });\n      return;\n    } catch (e) {\n      console.error('Native PDF save failed, falling back:', e);\n    }\n  }\n  try {\n    const pdfDataUri = doc.output('datauristring');\n    const link = document.createElement('a');\n    link.href = pdfDataUri;\n    link.download = filename;\n    link.style.display = 'none';\n    document.body.appendChild(link);\n    link.click();\n    setTimeout(() => document.body.removeChild(link), 500);\n  } catch (e) {\n    console.error('PDF download failed:', e);\n  }\n}\n\"
-          f = open('dairyfuture-main/src/lib/nativePdf.ts', 'w'); f.write(helper); f.close()
+          cat > dairyfuture-main/android/app/src/main/java/com/dairyfuture/admin/DownloadsPlugin.java <<'EOF'
+          package com.dairyfuture.admin;
+
+          import android.content.ContentResolver;
+          import android.content.ContentValues;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Environment;
+          import android.provider.MediaStore;
+          import android.util.Base64;
+
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.OutputStream;
+
+          @CapacitorPlugin(name = "DownloadsSaver")
+          public class DownloadsPlugin extends Plugin {
+
+              @PluginMethod
+              public void savePdf(PluginCall call) {
+                  String filename = call.getString("filename");
+                  String base64 = call.getString("base64");
+                  if (filename == null || filename.isEmpty() || base64 == null || base64.isEmpty()) {
+                      call.reject("filename and base64 are required");
+                      return;
+                  }
+                  try {
+                      byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+                      String location;
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                          ContentResolver resolver = getContext().getContentResolver();
+                          ContentValues values = new ContentValues();
+                          values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
+                          values.put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf");
+                          values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                          Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                          if (uri == null) {
+                              call.reject("Could not create file in Downloads");
+                              return;
+                          }
+                          OutputStream os = resolver.openOutputStream(uri);
+                          if (os == null) {
+                              call.reject("Could not open Downloads file");
+                              return;
+                          }
+                          try {
+                              os.write(bytes);
+                              os.flush();
+                          } finally {
+                              os.close();
+                          }
+                          location = "Downloads/" + filename;
+                      } else {
+                          File dir = getContext().getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                          if (dir == null) {
+                              call.reject("Storage not available");
+                              return;
+                          }
+                          if (!dir.exists()) {
+                              dir.mkdirs();
+                          }
+                          File out = new File(dir, filename);
+                          FileOutputStream fos = new FileOutputStream(out);
+                          try {
+                              fos.write(bytes);
+                              fos.flush();
+                          } finally {
+                              fos.close();
+                          }
+                          location = out.getAbsolutePath();
+                      }
+                      JSObject ret = new JSObject();
+                      ret.put("saved", true);
+                      ret.put("location", location);
+                      call.resolve(ret);
+                  } catch (Exception e) {
+                      call.reject("Save failed: " + e.getMessage());
+                  }
+              }
+          }
+          EOF
+
+      - name: Register DownloadsPlugin in MainActivity
+        run: |
+          sed -i 's/registerPlugin(AdminNotificationPlugin.class);/registerPlugin(AdminNotificationPlugin.class);\n        registerPlugin(DownloadsPlugin.class);/' dairyfuture-main/android/app/src/main/java/com/dairyfuture/admin/MainActivity.java
+          grep -q "DownloadsPlugin.class" dairyfuture-main/android/app/src/main/java/com/dairyfuture/admin/MainActivity.java
+
+      - name: Add native PDF helper and wire it into PDF export screens
+        run: |
+          cat > dairyfuture-main/src/lib/nativePdf.ts <<'EOF'
+          import { Capacitor, registerPlugin } from '@capacitor/core';
+
+          interface DownloadsSaverPlugin {
+            savePdf(options: { filename: string; base64: string }): Promise<{ saved: boolean; location: string }>;
+          }
+
+          const DownloadsSaver = registerPlugin<DownloadsSaverPlugin>('DownloadsSaver');
+
+          export async function downloadPdfNative(doc: any, filename: string): Promise<boolean> {
+            if (Capacitor.isNativePlatform()) {
+              try {
+                const dataUri: string = doc.output('datauristring');
+                const base64 = dataUri.split(',')[1];
+                await DownloadsSaver.savePdf({ filename, base64 });
+                return true;
+              } catch (e) {
+                console.error('Native PDF save failed:', e);
+                return false;
+              }
+            }
+            try {
+              const pdfDataUri: string = doc.output('datauristring');
+              const link = document.createElement('a');
+              link.href = pdfDataUri;
+              link.download = filename;
+              link.style.display = 'none';
+              document.body.appendChild(link);
+              link.click();
+              setTimeout(() => document.body.removeChild(link), 500);
+              return true;
+            } catch (e) {
+              console.error('PDF download failed:', e);
+              return false;
+            }
+          }
+          EOF
+
+          cat > /tmp/patch_pdf.py <<'EOF'
+          import re
 
           path = 'dairyfuture-main/src/utils/exportData.ts'
-          f = open(path); content = f.read(); f.close()
-          content = content.replace(\"import jsPDF from 'jspdf';\", \"import jsPDF from 'jspdf';\nimport { downloadPdfNative } from '@/lib/nativePdf';\", 1)
-          start_marker = '// Safe PDF download using data URI + hidden anchor (works in sandbox/mobile/APK)\nconst safePDFDownload = (doc: jsPDF, filename: string) => {'
-          end_marker = 'export const exportToPDF = ('
-          start_idx = content.index(start_marker)
-          end_idx = content.index(end_marker)
-          new_fn = 'Native app me Downloads folder me seedha save, web me normal browser download\nconst safePDFDownload = (doc: jsPDF, filename: string) => {\n  void downloadPdfNative(doc, filename);\n};\n\n'
-          new_fn = '// ' + new_fn
+          content = open(path).read()
+          content = content.replace("import jsPDF from 'jspdf';", "import jsPDF from 'jspdf';\nimport { downloadPdfNative } from '@/lib/nativePdf';", 1)
+          start_idx = content.index('// Safe PDF download using data URI')
+          end_idx = content.index('export const exportToPDF = (')
+          new_fn = (
+              "// Native app: save directly to Downloads. Web: normal browser download.\n"
+              "const safePDFDownload = (doc: jsPDF, filename: string) => {\n"
+              "  void downloadPdfNative(doc, filename);\n"
+              "};\n\n"
+          )
           content = content[:start_idx] + new_fn + content[end_idx:]
-          f = open(path, 'w'); f.write(content); f.close()
+          open(path, 'w').write(content)
 
           path2 = 'dairyfuture-main/src/components/ReportReceipt.tsx'
-          f = open(path2); content2 = f.read(); f.close()
-          lines = content2.split('\n', 1)
-          content2 = lines[0] + \"\nimport { downloadPdfNative } from '@/lib/nativePdf';\" + '\n' + lines[1]
-          old_block = \"      const pdfDataUri = doc.output('datauristring');\n      const link = document.createElement('a');\n      link.href = pdfDataUri;\n      link.download = \`Milk_Report_\${data.supplierCode}_\${data.startDate.replace(/-/g, '_')}.pdf\`;\n      link.target = '_blank';\n      link.rel = 'noopener';\n      link.style.display = 'none';\n      document.body.appendChild(link);\n      link.click();\n      setTimeout(() => { document.body.removeChild(link); }, 100);\"
-          new_block = \"      void downloadPdfNative(doc, \`Milk_Report_\${data.supplierCode}_\${data.startDate.replace(/-/g, '_')}.pdf\`);\"
-          content2 = content2.replace(old_block, new_block, 1)
-          f = open(path2, 'w'); f.write(content2); f.close()
+          c2 = open(path2).read()
+          c2 = c2.replace("import jsPDF from 'jspdf';", "import jsPDF from 'jspdf';\nimport { downloadPdfNative } from '@/lib/nativePdf';", 1)
+          pattern = re.compile(r"      const pdfDataUri = doc\.output\('datauristring'\);.*?setTimeout\(\(\) => \{ document\.body\.removeChild\(link\); \}, 100\);", re.S)
+          replacement = "      void downloadPdfNative(doc, `Milk_Report_${data.supplierCode}_${data.startDate.replace(/-/g, '_')}.pdf`);"
+          c2, n = pattern.subn(lambda m: replacement, c2, count=1)
+          assert n == 1, 'ReportReceipt PDF block not found'
+          open(path2, 'w').write(c2)
           print('pdf patch applied')
-          "
+          EOF
+          python3 /tmp/patch_pdf.py
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -115,10 +250,6 @@ jobs:
         run: |
           npm uninstall @capacitor-community/speech-recognition --legacy-peer-deps
           npm install @capgo/capacitor-speech-recognition --legacy-peer-deps
-
-      - name: Install native PDF save plugin
-        working-directory: dairyfuture-main
-        run: npm install @capgo/capacitor-file-sharer --legacy-peer-deps
 
       - name: Set app name to DairyFuture
         run: |
